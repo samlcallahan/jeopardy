@@ -59,7 +59,8 @@ def get_episode_clues(episode_url):
 
     for tag in soup.find_all(class_='clue_text'):
         clues.append(tag.text)
-
+    
+    game = soup.find(class_)
     return categories, clues, correct_responses
 
 def get_category(clue_id):
@@ -76,15 +77,15 @@ def make_rows(categories, clues, answers, season, episode):
     second = categories [6:12]
     final = categories[-1]
     rows = []
-    for i in len(clues):
+    for i in range(len(clues)):
         rows.append({   'season': season,
                         'episode': episode,
                         'category': categories[get_category(i)],
-                        'clue': clues[i]},
+                        'clue': clues[i],
                         'answer': answers[i]})
     return rows
 
-def get_clues():
+def get_clues(debug=False):
     seasons = pd.DataFrame()
     seasons['urls'] = get_season_urls()
     seasons['names'] = seasons['urls'].str.split('=').apply(lambda x: x[1])
@@ -92,25 +93,31 @@ def get_clues():
     jeopardy = []
 
     for url in seasons['urls']:
-        season = seasons[seasons['urls'] == url]['names'].item()
+        season = seasons[seasons['urls'] == url]['names']['names']
+        if debug:
+            print(season)
         episodes = get_episode_urls(url)
         for episode in episodes:
             ep_id = episode[-4:]
-            jeopardy.append(make_rows(get_episode_clues(episode), season, ep_id))
+            if debug:
+                print(ep_id)
+            categories, clues, answers = get_episode_clues(episode)
+            jeopardy.append(make_rows(categories, clues, answers, season, ep_id))
     
     return pd.DataFrame(jeopardy)
 
 
-// clues
 '''
+clues 
+
 id
 clue text
 answer text (not in question form)
-category
+categorys
 date
-'''
-// wikis
-'''
+
+wikis
+
 id
 answer/wiki title (should be the same?)
 wiki contents
