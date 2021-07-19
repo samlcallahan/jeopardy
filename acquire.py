@@ -6,27 +6,46 @@ import wikipedia as wiki
 
 URL = "https://j-archive.com/"
 
+# gets the urls for all seasons of jeopardy from the above website
 def get_season_urls():
     url_suffix = "listseasons.php"
+
+    # gets html from website index
     response = get(URL + url_suffix)
     soup = BeautifulSoup(response.content, 'html.parser')
+    
+    # picks out all season elements
     seasons_html = soup.find_all('tr')
     seasons = []
+
+    # takes season URLs out of html chunks
     for season in seasons_html:
         seasons.append(season.find('a').get('href'))
     return seasons
 
+# gets URLs for all episodes in a given season
 def get_episode_urls(season_url):
+
+    # gets html of season index
     response = get(URL + season_url)
+
+    # picks out episode elements
     soup = BeautifulSoup(response.content, 'html.parser')
     episodes_html = soup.find_all('tr')
+
+    # takes episode URLs out of html chunks
     episodes = []
     for episode in episodes_html:
         episodes.append(episode.find('a').get('href'))
     return episodes
 
+# gets all clue categories out of a given episode's html soup
 def get_episode_categories(episode_soup):
+
+    # finds all td html chunks
     soups = episode_soup.find_all('td', class_="category_name")
+
+    # goes through each td chunk to make sure it's a category title -- if it is, adds it to list of categories
     categories = []
     for i in soups:
         if i.string is not None:
@@ -39,12 +58,21 @@ def get_episode_categories(episode_soup):
             categories.append(category)
     return categories
 
+def decode_category(code, categories):
+    if code[0] == 'J':
+        return categories[code[-3]]
+    elif code[0] == 'D':
+        return categories[code[-3] + 6]
+    else:
+        return categories[-1]
+
 def get_episode_clues(episode_url):
     response = get(episode_url)
     soup = BeautifulSoup(response.content, 'html.parser')
-    categories = get_episode_categories(soup)
+    category_list = get_episode_categories(soup)
 
     clues = []
+    categories = []
     correct_responses = []
     correct_response_soups = [] 
 
@@ -59,28 +87,18 @@ def get_episode_clues(episode_url):
 
     for tag in soup.find_all(class_='clue_text'):
         clues.append(tag.text)
+        clue_code = decode_category(tag.get('id')[5:], category_list)
+        categories.append(clue_code)
     
     game = soup.find(class_)
     return categories, clues, correct_responses
 
-def get_category(clue_id):
-    category = clue_id % 6
-    if clue_id < 30:
-        return category
-    elif clue_id < 60:
-        return category + 6
-    else:
-        return 12
-
 def make_rows(categories, clues, answers, season, episode):
-    first = categories[:6]
-    second = categories [6:12]
-    final = categories[-1]
     rows = []
     for i in range(len(clues)):
         rows.append({   'season': season,
                         'episode': episode,
-                        'category': categories[get_category(i)],
+                        'category': categories[i],
                         'clue': clues[i],
                         'answer': answers[i]})
     return rows
