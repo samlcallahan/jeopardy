@@ -43,10 +43,12 @@ def get_episode_urls(season_url):
 # clue codes are of the format [J/DJ]_[category_number]_[question_number] or FJ
 def decode_category(code, categories):
     if code[0] == 'J':
-        index = int(code[-3])
+        index = int(code[-3]) - 1
         return categories[index]
     elif code[0] == 'D':
-        index = int(code[-3]) + 6
+        index = int(code[-3]) + 5
+        if len(categories) < 13:
+            index -= 6
         return categories[index]
     else:
         return categories[-1]
@@ -78,7 +80,8 @@ def get_episode_clue_data(episode_soup, category_list):
 
     for spoonful in episode_soup.find_all(class_='clue_text'):
         clues.append(spoonful.text)
-        category = decode_category(spoonful.get('id')[5:], category_list)
+        clue_code = spoonful.get('id')[5:]
+        category = decode_category(clue_code, category_list)
         categories.append(category)
     return clues, categories
 
