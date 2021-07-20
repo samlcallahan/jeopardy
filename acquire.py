@@ -104,7 +104,7 @@ def get_episode_data(episode_url):
     clues, categories = get_episode_clue_data(soup, category_list)
     correct_responses = get_episode_answers(soup)
     
-    game = soup.find('class_')
+    game = soup.find(id='game_title').string
     return game, categories, clues, correct_responses
 
 def make_rows(categories, clues, answers, season, episode):
