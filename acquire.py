@@ -39,59 +39,73 @@ def get_episode_urls(season_url):
         episodes.append(episode.find('a').get('href'))
     return episodes
 
-# gets all clue categories out of a given episode's html soup
-def get_episode_categories(episode_soup):
+# given a clue code and an episode's full list of categories, returns the clue's category name
+# clue codes are of the format [J/DJ]_[category_number]_[question_number] or FJ
+def decode_category(code, categories):
+    if code[0] == 'J':
+        index = int(code[-3])
+        return categories[index]
+    elif code[0] == 'D':
+        index = int(code[-3]) + 6
+        return categories[index]
+    else:
+        return categories[-1]
+
+# gets a list of all clue categories out of a given episode's html soup
+def get_episode_category_list(episode_soup):
 
     # finds all td html chunks
     soups = episode_soup.find_all('td', class_="category_name")
 
-    # goes through each td chunk to make sure it's a category title -- if it is, adds it to list of categories
-    categories = []
+    # goes through each td chunk and finds the category name in it. Sometimes it's split into multiple html elements.
+    category_list = []
     for i in soups:
         if i.string is not None:
-            categories.append(i.string)
+            category_list.append(i.string)
         else:
             category = ''
             for element in i.contents:
                 if element.string is not None:
                     category += element.string
-            categories.append(category)
-    return categories
+            category_list.append(category)
 
-def decode_category(code, categories):
-    if code[0] == 'J':
-        return categories[code[-3]]
-    elif code[0] == 'D':
-        return categories[code[-3] + 6]
-    else:
-        return categories[-1]
+    return category_list
 
-def get_episode_clues(episode_url):
-    response = get(episode_url)
-    soup = BeautifulSoup(response.content, 'html.parser')
-    category_list = get_episode_categories(soup)
-
+# returns a list of all clues and their categories in an episode, given the episode page's soup
+def get_episode_clue_data(episode_soup, category_list):
     clues = []
     categories = []
-    correct_responses = []
-    correct_response_soups = [] 
 
-    for tag in soup.find_all('div', onmouseover=True): 
-        correct_response_soups.append(tag['onmouseover']) 
-    # classes: correct_response, clue_text
+    for spoonful in episode_soup.find_all(class_='clue_text'):
+        clues.append(spoonful.text)
+        category = decode_category(spoonful.get('id')[5:], category_list)
+        categories.append(category)
+    return clues, categories
 
-    for soup_string in correct_response_soups:
-        correct_response_soup = BeautifulSoup(soup_string)
-        correct_responses.append(correct_response_soup.find('em').string)
-    # id: clue_[category_number]_[clue_number]
+# returns a list of correct answers in an episode given the episode page's soup
+def get_episode_answers(episode_soup):
+    answers = []
+    spoonfuls = []
 
-    for tag in soup.find_all(class_='clue_text'):
-        clues.append(tag.text)
-        clue_code = decode_category(tag.get('id')[5:], category_list)
-        categories.append(clue_code)
+    for tag in episode_soup.find_all('div', onmouseover=True): 
+        spoonfuls.append(tag['onmouseover']) 
+
+    for soup_string in spoonfuls:
+        answer_soup = BeautifulSoup(soup_string)
+        answers.append(answer_soup.find('em').string)
+    return answers
+
+# given an episode's url returns a tuple of lists of the categories, clues, and correct answers in an episode
+def get_episode_data(episode_url):
+    response = get(episode_url)
+    soup = BeautifulSoup(response.content, 'html.parser')
+    category_list = get_episode_category_list(soup)
+
+    clues, categories = get_episode_clue_data(soup, category_list)
+    correct_responses = get_episode_answers(soup)
     
-    game = soup.find(class_)
-    return categories, clues, correct_responses
+    game = soup.find('class_')
+    return game, categories, clues, correct_responses
 
 def make_rows(categories, clues, answers, season, episode):
     rows = []
@@ -111,16 +125,17 @@ def get_clues(debug=False):
     jeopardy = []
 
     for url in seasons['urls']:
-        season = seasons[seasons['urls'] == url]['names']['names']
         if debug:
-            print(season)
+            print(f'Going to {url}')
+        season = seasons[seasons['urls'] == url]['names'].item()
+        if debug:
+            print(f'Acquiring Season: {season}')
         episodes = get_episode_urls(url)
         for episode in episodes:
-            ep_id = episode[-4:]
+            game_name, categories, clues, answers = get_episode_data(episode)
             if debug:
-                print(ep_id)
-            categories, clues, answers = get_episode_clues(episode)
-            jeopardy.append(make_rows(categories, clues, answers, season, ep_id))
+                print(f'Just acquired: {game_name}')
+            jeopardy.append(make_rows(categories, clues, answers, season, game_name))
     
     return pd.DataFrame(jeopardy)
 
