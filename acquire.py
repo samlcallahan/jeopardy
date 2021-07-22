@@ -46,9 +46,9 @@ def decode_category(code, categories):
         index = int(code[-3]) - 1
         return categories[index]
     elif code[0] == 'D':
-        index = int(code[-3]) + 5
-        if len(categories) < 13:
-            index -= 6
+        index = int(code[-3]) - 8
+        # if len(categories) < 13:
+        #     index -= 6
         return categories[index]
     else:
         return categories[-1]
@@ -120,7 +120,7 @@ def make_rows(categories, clues, answers, season, episode):
                         'answer': answers[i]})
     return rows
 
-def get_clues(debug=False):
+def get_clues(debug=False, first_only=False):
     seasons = pd.DataFrame()
     seasons['urls'] = get_season_urls()
     seasons['names'] = seasons['urls'].str.split('=').apply(lambda x: x[1])
@@ -138,7 +138,9 @@ def get_clues(debug=False):
             game_name, categories, clues, answers = get_episode_data(episode)
             if debug:
                 print(f'Just acquired: {game_name}')
-            jeopardy.append(make_rows(categories, clues, answers, season, game_name))
+            jeopardy += make_rows(categories, clues, answers, season, game_name)
+        if first_only:
+            break
     
     return pd.DataFrame(jeopardy)
 
