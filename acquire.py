@@ -84,7 +84,7 @@ def get_episode_clue_data(episode_soup, category_list):
         category = decode_category(clue_code, category_list)
         categories.append(category)
     return clues, categories
-
+    
 # returns a list of correct answers in an episode given the episode page's soup
 def get_episode_answers(episode_soup):
     answers = []
