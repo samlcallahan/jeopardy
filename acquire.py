@@ -6,8 +6,10 @@ import wikipedia as wiki
 
 URL = "https://j-archive.com/"
 
-# gets the urls for all seasons of jeopardy from the above website
 def get_season_urls():
+    '''
+    gets the urls for all seasons of jeopardy from the above website
+    '''
     url_suffix = "listseasons.php"
 
     # gets html from website index
@@ -23,8 +25,10 @@ def get_season_urls():
         seasons.append(season.find('a').get('href'))
     return seasons
 
-# gets URLs for all episodes in a given season
 def get_episode_urls(season_url):
+    '''
+    gets URLs for all episodes in a given season
+    '''
 
     # gets html of season index
     response = get(URL + season_url)
@@ -39,9 +43,11 @@ def get_episode_urls(season_url):
         episodes.append(episode.find('a').get('href'))
     return episodes
 
-# given a clue code and an episode's full list of categories, returns the clue's category name
-# clue codes are of the format [J/DJ]_[category_number]_[question_number] or FJ
 def decode_category(code, categories):
+    '''
+    given a clue code and an episode's full list of categories, returns the clue's category name
+    clue codes are of the format [J/DJ]_[category_number]_[question_number] or FJ
+    '''
     if code[0] == 'J':
         index = int(code[-3]) - 1
         return categories[index]
@@ -53,8 +59,10 @@ def decode_category(code, categories):
     else:
         return categories[-1]
 
-# gets a list of all clue categories out of a given episode's html soup
 def get_episode_category_list(episode_soup):
+    '''
+    gets a list of all clue categories out of a given episode's html soup
+    '''
 
     # finds all td html chunks
     soups = episode_soup.find_all('td', class_="category_name")
@@ -73,8 +81,10 @@ def get_episode_category_list(episode_soup):
 
     return category_list
 
-# returns a list of all clues and their categories in an episode, given the episode page's soup
 def get_episode_clue_data(episode_soup, category_list):
+    '''
+    returns a list of all clues and their categories in an episode, given the episode page's soup
+    '''
     clues = []
     categories = []
 
@@ -85,8 +95,10 @@ def get_episode_clue_data(episode_soup, category_list):
         categories.append(category)
     return clues, categories
     
-# returns a list of correct answers in an episode given the episode page's soup
 def get_episode_answers(episode_soup):
+    '''
+    returns a list of correct answers in an episode given the episode page's soup
+    '''
     answers = []
     spoonfuls = []
 
@@ -98,8 +110,11 @@ def get_episode_answers(episode_soup):
         answers.append(answer_soup.find('em').string)
     return answers
 
-# given an episode's url returns a tuple of lists of the categories, clues, and correct answers in an episode
 def get_episode_data(episode_url):
+    '''
+    given an episode's url returns a tuple of lists of the categories, clues, and correct answers in an episode
+    '''
+
     response = get(episode_url)
     soup = BeautifulSoup(response.content, 'html.parser')
     category_list = get_episode_category_list(soup)
