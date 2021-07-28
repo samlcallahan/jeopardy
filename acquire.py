@@ -2,6 +2,8 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from requests import get
 import wikipedia as wiki
+import pyarrow.feather as feather
+import os
 
 
 URL = "https://j-archive.com/"
@@ -47,14 +49,13 @@ def decode_category(code, categories):
     '''
     given a clue code and an episode's full list of categories, returns the clue's category name
     clue codes are of the format [J/DJ]_[category_number]_[question_number] or FJ
+    most episodes have 13 categories (6 jeopardy, 6 double jeopardy, 1 final jeopardy), but some have only 7 (6 double jeopardy, 1 final jeopardy)
     '''
     if code[0] == 'J':
         index = int(code[-3]) - 1
         return categories[index]
     elif code[0] == 'D':
         index = int(code[-3]) - 8
-        # if len(categories) < 13:
-        #     index -= 6
         return categories[index]
     else:
         return categories[-1]
@@ -64,7 +65,7 @@ def get_episode_category_list(episode_soup):
     gets a list of all clue categories out of a given episode's html soup
     '''
 
-    # finds all td html chunks
+    # finds all html chunks with the category_name class
     soups = episode_soup.find_all('td', class_="category_name")
 
     # goes through each td chunk and finds the category name in it. Sometimes it's split into multiple html elements.
@@ -135,43 +136,74 @@ def make_rows(categories, clues, answers, season, episode):
                         'answer': answers[i]})
     return rows
 
-def get_clues(debug=False, first_only=False):
+def get_wiki_title(answer, debug=True):
+    results = wiki.search(answer)
+    if results == []:
+        print(f'{answer} not found.')
+        return None
+    title = results[0]
+    print(f'{answer} matched {title}')
+    return title
+
+def get_wiki_data(wiki_title, full_content = False):
+    if wiki_title is None:
+        return None
+    if full_content:
+        return wiki.page(wiki_title).content
+    wiki_info = wiki.summary(wiki_title)
+    return wiki_info
+
+def save_df(df):
+    feather.write_feather(df, f'{df.name}.feather')
+
+def get_clues(debug=False, update=False):
+    jeopardy = pd.DataFrame()
+    jeopardy.name = 'jeopardy'
+    if os.path.exists('jeopardy.feather'):
+        jeopardy = feather.read_feather('jeopardy.feather')
+        if not update:
+            return jeopardy
+    
     seasons = pd.DataFrame()
     seasons['urls'] = get_season_urls()
+
     seasons['names'] = seasons['urls'].str.split('=').apply(lambda x: x[1])
 
-    jeopardy = []
-
     for url in seasons['urls']:
-        if debug:
-            print(f'Going to {url}')
-        season = seasons[seasons['urls'] == url]['names'].item()
+        season = seasons[seasons['urls'] == url].loc[0, 'names']
+
+        if update:
+            acquired_games = set(jeopardy[jeopardy.season == season]['episode'])
+
         if debug:
             print(f'Acquiring Season: {season}')
+
         episodes = get_episode_urls(url)
+
         for episode in episodes:
             game_name, categories, clues, answers = get_episode_data(episode)
+            if update and game_name in acquired_games:
+                break
             if debug:
                 print(f'Just acquired: {game_name}')
-            jeopardy += make_rows(categories, clues, answers, season, game_name)
-        if first_only:
-            break
+            jeopardy.append(make_rows(categories, clues, answers, season, game_name), ignore_index=True)
     
-    return pd.DataFrame(jeopardy)
+    save_df(jeopardy)
+    return jeopardy
 
+def get_wiki_df(debug=False):
+    if os.path.exists('wiki.feather'):
+        wiki = feather.read_feather('wiki.feather')
+        return wiki
 
-'''
-clues 
+    wiki = get_clues()
+    wiki.name = 'wiki'
+    
+    if debug:
+        wiki['title'] = wiki['answer'].apply(lambda x: get_wiki_title(x, True))
+    else:
+        wiki['title'] = wiki['answer'].apply(get_wiki_title)
+    wiki['summary'] = wiki['title'].apply(get_wiki_data)
 
-id
-clue text
-answer text (not in question form)
-categorys
-date
-
-wikis
-
-id
-answer/wiki title (should be the same?)
-wiki contents
-'''
+    save_df(wiki)
+    return wiki
