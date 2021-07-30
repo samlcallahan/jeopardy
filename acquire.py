@@ -17,6 +17,9 @@ URL = "https://j-archive.com/"
 thread_local = threading.local()
 
 def get_session():
+    '''
+    if the current thread doesn't have a requests Session object, creates one and updates the headers
+    '''
     if not hasattr(thread_local, "session"):
         thread_local.session = Session()
         thread_local.session.headers.update(HEADERS)
@@ -46,6 +49,7 @@ def episode_urls(season_url):
     gets URLs for all episodes in a given season
     '''
     session = get_session()
+
     # gets html of season index
     response = session.get(URL + season_url)
 
@@ -85,13 +89,13 @@ def episode_category_list(episode_soup):
     # goes through each td chunk and finds the category name in it. Sometimes it's split into multiple html elements.
     category_list = []
     for i in soups:
-        if i.string is not None:
-            category_list.append(i.string)
+        if i.text is not None:
+            category_list.append(i.text)
         else:
             category = ''
             for element in i.contents:
-                if element.string is not None:
-                    category += element.string
+                if element.text is not None:
+                    category += element.text
             category_list.append(category)
 
     return category_list
@@ -135,8 +139,8 @@ def episode_answers(episode_soup):
         spoonfuls.append(tag['onmouseover']) 
 
     for soup_string in spoonfuls:
-        answer_soup = BeautifulSoup(soup_string)
-        answers.append(answer_soup.find('em').string)
+        answer_soup = BeautifulSoup(soup_string, 'html.parser')
+        answers.append(answer_soup.find('em').text)
     return answers
 
 def episode_data(episode_url, debug):
@@ -152,7 +156,7 @@ def episode_data(episode_url, debug):
     clues, categories, values = episode_clue_data(soup, category_list, debug)
     correct_responses = episode_answers(soup)
     
-    game = soup.find(id='game_title').string
+    game = soup.find(id='game_title').text
     return game, categories, clues, correct_responses, values
 
 def make_rows(categories, clues, answers, season, episode, values):
@@ -170,8 +174,6 @@ def season_data(url, debug, df):
     season_name = url.split('=')[1]
     # if update:
     #     acquired_games = set(df[df.season == season_name]['episode'])
-    if debug:
-        print(f'Acquiring Season: {season_name}')
     
     episodes = episode_urls(url)
 
@@ -180,9 +182,11 @@ def season_data(url, debug, df):
         # if update and game_name in acquired_games:
         #     break
         if debug:
-            print(f'Just acquired: {game_name}')
+            print(f'Just acquired: {game_name} from {episode}')
         df.append(make_rows(categories, clues, answers, season_name, game_name, values), ignore_index=True)
     
+    if debug:
+        print(f'Finished acquiring Season: {season_name}')
     return df
 
 def all_seasons(seasons, debug, df):
