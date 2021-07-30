@@ -7,19 +7,29 @@ import os
 import sys
 from env import user
 from time import time
+import concurrent.futures
+import threading
 
 HEADERS = {'User-Agent': user}
 
 URL = "https://j-archive.com/"
 
-def season_urls(session):
+thread_local = threading.local()
+
+def get_session():
+    if not hasattr(thread_local, "session"):
+        thread_local.session = Session()
+        thread_local.session.headers.update(HEADERS)
+    return thread_local.session
+
+def season_urls():
     '''
     gets the urls for all seasons of jeopardy from the above website
     '''
     url_suffix = "listseasons.php"
 
     # gets html from website index
-    response = session.get(URL + url_suffix)
+    response = get(URL + url_suffix, headers=HEADERS)
     soup = BeautifulSoup(response.content, 'html.parser')
     
     # picks out all season elements
@@ -31,11 +41,11 @@ def season_urls(session):
         seasons.append(season.find('a').get('href'))
     return seasons
 
-def episode_urls(season_url, session):
+def episode_urls(season_url):
     '''
     gets URLs for all episodes in a given season
     '''
-
+    session = get_session()
     # gets html of season index
     response = session.get(URL + season_url)
 
@@ -86,7 +96,7 @@ def episode_category_list(episode_soup):
 
     return category_list
 
-def episode_clue_data(episode_soup, category_list):
+def episode_clue_data(episode_soup, category_list, debug):
     '''
     returns a list of all clues and their categories in an episode, given the episode page's soup
     '''
@@ -95,15 +105,23 @@ def episode_clue_data(episode_soup, category_list):
     values = []
 
     for spoonful in episode_soup.find_all(class_='clue'):
-        
+        if spoonful.text == '\n':
+            continue
         clue_text = spoonful.find(class_='clue_text')
         clues.append(clue_text.text)
-
-        values.append(spoonful.find(class_='clue_value').text)
-        
+        # if debug:
+        #     print(clue_text.text)
         clue_code = clue_text['id'][5:]
+
         category = decode_category(clue_code, category_list)
         categories.append(category)
+
+        if spoonful.find(class_='clue_value'):
+            values.append(spoonful.find(class_='clue_value').text)
+        elif spoonful.find(class_='clue_value_daily_double'):
+            values.append(spoonful.find(class_='clue_value_daily_double').text)
+        else:
+            values.append(None)
     return clues, categories, values
     
 def episode_answers(episode_soup):
@@ -121,16 +139,17 @@ def episode_answers(episode_soup):
         answers.append(answer_soup.find('em').string)
     return answers
 
-def episode_data(episode_url, session):
+def episode_data(episode_url, debug):
     '''
     given an episode's url returns a tuple of lists of the categories, clues, and correct answers in an episode
     '''
 
+    session = get_session()
     response = session.get(episode_url)
     soup = BeautifulSoup(response.content, 'html.parser')
     category_list = episode_category_list(soup)
 
-    clues, categories, values = episode_clue_data(soup, category_list)
+    clues, categories, values = episode_clue_data(soup, category_list, debug)
     correct_responses = episode_answers(soup)
     
     game = soup.find(id='game_title').string
@@ -146,6 +165,29 @@ def make_rows(categories, clues, answers, season, episode, values):
                         'clue': clues[i],
                         'answer': answers[i]})
     return rows
+
+def season_data(url, debug, df):
+    season_name = url.split('=')[1]
+    # if update:
+    #     acquired_games = set(df[df.season == season_name]['episode'])
+    if debug:
+        print(f'Acquiring Season: {season_name}')
+    
+    episodes = episode_urls(url)
+
+    for episode in episodes:
+        game_name, categories, clues, answers, values = episode_data(episode, debug)
+        # if update and game_name in acquired_games:
+        #     break
+        if debug:
+            print(f'Just acquired: {game_name}')
+        df.append(make_rows(categories, clues, answers, season_name, game_name, values), ignore_index=True)
+    
+    return df
+
+def all_seasons(seasons, debug, df):
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        executor.map(lambda x: season_data(x, debug, df), seasons)
 
 def wiki_title(answer, debug=True):
     results = wiki.search(answer)
@@ -167,41 +209,45 @@ def wiki_data(wiki_title, full_content = False):
 def save_df(df):
     feather.write_feather(df, f'{df.name}.feather')
 
-def clues(debug=False, update=False):
+def clues(debug=False, fresh=False):
     jeopardy = pd.DataFrame()
     jeopardy.name = 'jeopardy'
-    if os.path.exists('jeopardy.feather'):
-        jeopardy = feather.read_feather('jeopardy.feather')
-        if not update:
-            return jeopardy
+    if os.path.exists('jeopardy.feather') and not fresh:
+        return pd.read_feather('jeopardy.feather')
     
-    s = Session()
-    s.headers.update(HEADERS)
+    # s = Session()
+    # s.headers.update(HEADERS)
 
-    seasons = pd.DataFrame()
-    seasons['urls'] = season_urls(s)
+    seasons = season_urls()
 
-    seasons['names'] = seasons['urls'].str.split('=').apply(lambda x: x[1])
+    all_seasons(seasons, debug, jeopardy)
 
-    for url in seasons['urls']:
-        season = seasons[seasons['urls'] == url].loc[0, 'names']
-
-        if update:
-            acquired_games = set(jeopardy[jeopardy.season == season]['episode'])
-
-        if debug:
-            print(f'Acquiring Season: {season}')
-
-        episodes = episode_urls(url, s)
-
-        for episode in episodes:
-            game_name, categories, clues, answers, values = episode_data(episode, s)
-            if update and game_name in acquired_games:
-                break
-            if debug:
-                print(f'Just acquired: {game_name}')
-            jeopardy.append(make_rows(categories, clues, answers, season, game_name, values), ignore_index=True)
+    # for url in seasons:
+    #     jeopardy = season_data(url, debug, update, jeopardy)
     
+    # jeopardy.name = 'jeopardy'
+
+    # seasons['names'] = seasons['urls'].str.split('=').apply(lambda x: x[1])
+    
+    # for url in seasons:
+    #     jeopardy = season_data(url, debug, update, jeopardy)
+        # season = seasons[seasons['urls'] == url].loc[0, 'names']
+
+        # if update:
+        #     acquired_games = set(jeopardy[jeopardy.season == season]['episode'])
+
+        # if debug:
+        #     print(f'Acquiring Season: {season}')
+
+        # episodes = episode_urls(url)
+
+        # for episode in episodes:
+        #     game_name, categories, clues, answers, values = episode_data(episode)
+        #     if update and game_name in acquired_games:
+        #         break
+        #     if debug:
+        #         print(f'Just acquired: {game_name}')
+        #     jeopardy.append(make_rows(categories, clues, answers, season, game_name, values), ignore_index=True)
     save_df(jeopardy)
     return jeopardy
 
@@ -223,4 +269,4 @@ def wiki_df(debug=False):
     return wiki
 
 if __name__ == '__main__':
-    clues(debug=('debug' in sys.argv), update=('fresh' in sys.argv))
+    clues(debug=('debug' in sys.argv), fresh=('fresh' in sys.argv))
