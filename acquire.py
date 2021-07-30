@@ -1,21 +1,25 @@
 import pandas as pd
 from bs4 import BeautifulSoup
-from requests import get
+from requests import get, Session
 import wikipedia as wiki
 import pyarrow.feather as feather
 import os
+import sys
+from env import user
+from time import time
 
+HEADERS = {'User-Agent': user}
 
 URL = "https://j-archive.com/"
 
-def get_season_urls():
+def season_urls(session):
     '''
     gets the urls for all seasons of jeopardy from the above website
     '''
     url_suffix = "listseasons.php"
 
     # gets html from website index
-    response = get(URL + url_suffix)
+    response = session.get(URL + url_suffix)
     soup = BeautifulSoup(response.content, 'html.parser')
     
     # picks out all season elements
@@ -27,13 +31,13 @@ def get_season_urls():
         seasons.append(season.find('a').get('href'))
     return seasons
 
-def get_episode_urls(season_url):
+def episode_urls(season_url, session):
     '''
     gets URLs for all episodes in a given season
     '''
 
     # gets html of season index
-    response = get(URL + season_url)
+    response = session.get(URL + season_url)
 
     # picks out episode elements
     soup = BeautifulSoup(response.content, 'html.parser')
@@ -60,7 +64,7 @@ def decode_category(code, categories):
     else:
         return categories[-1]
 
-def get_episode_category_list(episode_soup):
+def episode_category_list(episode_soup):
     '''
     gets a list of all clue categories out of a given episode's html soup
     '''
@@ -82,21 +86,27 @@ def get_episode_category_list(episode_soup):
 
     return category_list
 
-def get_episode_clue_data(episode_soup, category_list):
+def episode_clue_data(episode_soup, category_list):
     '''
     returns a list of all clues and their categories in an episode, given the episode page's soup
     '''
     clues = []
     categories = []
+    values = []
 
-    for spoonful in episode_soup.find_all(class_='clue_text'):
-        clues.append(spoonful.text)
-        clue_code = spoonful.get('id')[5:]
+    for spoonful in episode_soup.find_all(class_='clue'):
+        
+        clue_text = spoonful.find(class_='clue_text')
+        clues.append(clue_text.text)
+
+        values.append(spoonful.find(class_='clue_value').text)
+        
+        clue_code = clue_text['id'][5:]
         category = decode_category(clue_code, category_list)
         categories.append(category)
-    return clues, categories
+    return clues, categories, values
     
-def get_episode_answers(episode_soup):
+def episode_answers(episode_soup):
     '''
     returns a list of correct answers in an episode given the episode page's soup
     '''
@@ -111,32 +121,33 @@ def get_episode_answers(episode_soup):
         answers.append(answer_soup.find('em').string)
     return answers
 
-def get_episode_data(episode_url):
+def episode_data(episode_url, session):
     '''
     given an episode's url returns a tuple of lists of the categories, clues, and correct answers in an episode
     '''
 
-    response = get(episode_url)
+    response = session.get(episode_url)
     soup = BeautifulSoup(response.content, 'html.parser')
-    category_list = get_episode_category_list(soup)
+    category_list = episode_category_list(soup)
 
-    clues, categories = get_episode_clue_data(soup, category_list)
-    correct_responses = get_episode_answers(soup)
+    clues, categories, values = episode_clue_data(soup, category_list)
+    correct_responses = episode_answers(soup)
     
     game = soup.find(id='game_title').string
-    return game, categories, clues, correct_responses
+    return game, categories, clues, correct_responses, values
 
-def make_rows(categories, clues, answers, season, episode):
+def make_rows(categories, clues, answers, season, episode, values):
     rows = []
     for i in range(len(clues)):
         rows.append({   'season': season,
                         'episode': episode,
                         'category': categories[i],
+                        'value': values[i],
                         'clue': clues[i],
                         'answer': answers[i]})
     return rows
 
-def get_wiki_title(answer, debug=True):
+def wiki_title(answer, debug=True):
     results = wiki.search(answer)
     if results == []:
         print(f'{answer} not found.')
@@ -145,7 +156,7 @@ def get_wiki_title(answer, debug=True):
     print(f'{answer} matched {title}')
     return title
 
-def get_wiki_data(wiki_title, full_content = False):
+def wiki_data(wiki_title, full_content = False):
     if wiki_title is None:
         return None
     if full_content:
@@ -156,7 +167,7 @@ def get_wiki_data(wiki_title, full_content = False):
 def save_df(df):
     feather.write_feather(df, f'{df.name}.feather')
 
-def get_clues(debug=False, update=False):
+def clues(debug=False, update=False):
     jeopardy = pd.DataFrame()
     jeopardy.name = 'jeopardy'
     if os.path.exists('jeopardy.feather'):
@@ -164,8 +175,11 @@ def get_clues(debug=False, update=False):
         if not update:
             return jeopardy
     
+    s = Session()
+    s.headers.update(HEADERS)
+
     seasons = pd.DataFrame()
-    seasons['urls'] = get_season_urls()
+    seasons['urls'] = season_urls(s)
 
     seasons['names'] = seasons['urls'].str.split('=').apply(lambda x: x[1])
 
@@ -178,32 +192,35 @@ def get_clues(debug=False, update=False):
         if debug:
             print(f'Acquiring Season: {season}')
 
-        episodes = get_episode_urls(url)
+        episodes = episode_urls(url, s)
 
         for episode in episodes:
-            game_name, categories, clues, answers = get_episode_data(episode)
+            game_name, categories, clues, answers, values = episode_data(episode, s)
             if update and game_name in acquired_games:
                 break
             if debug:
                 print(f'Just acquired: {game_name}')
-            jeopardy.append(make_rows(categories, clues, answers, season, game_name), ignore_index=True)
+            jeopardy.append(make_rows(categories, clues, answers, season, game_name, values), ignore_index=True)
     
     save_df(jeopardy)
     return jeopardy
 
-def get_wiki_df(debug=False):
+def wiki_df(debug=False):
     if os.path.exists('wiki.feather'):
         wiki = feather.read_feather('wiki.feather')
         return wiki
 
-    wiki = get_clues()
+    wiki = clues()
     wiki.name = 'wiki'
     
     if debug:
-        wiki['title'] = wiki['answer'].apply(lambda x: get_wiki_title(x, True))
+        wiki['title'] = wiki['answer'].apply(lambda x: wiki_title(x, True))
     else:
-        wiki['title'] = wiki['answer'].apply(get_wiki_title)
-    wiki['summary'] = wiki['title'].apply(get_wiki_data)
+        wiki['title'] = wiki['answer'].apply(wiki_title)
+    wiki['summary'] = wiki['title'].apply(wiki_data)
 
     save_df(wiki)
     return wiki
+
+if __name__ == '__main__':
+    clues(debug=('debug' in sys.argv), update=('fresh' in sys.argv))
