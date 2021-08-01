@@ -170,11 +170,15 @@ def make_rows(categories, clues, answers, season, episode, values):
                         'answer': answers[i]})
     return rows
 
-def season_data(url, debug, df):
+def season_data(url, debug):
     season_name = url.split('=')[1]
     # if update:
     #     acquired_games = set(df[df.season == season_name]['episode'])
     
+    df = pd.DataFrame()
+
+    df.name = season_name
+
     episodes = episode_urls(url)
 
     for episode in episodes:
@@ -182,16 +186,24 @@ def season_data(url, debug, df):
         # if update and game_name in acquired_games:
         #     break
         if debug:
-            print(f'Just acquired: {game_name} from {episode}')
+            print(f'Just acquired: {game_name}')
         df.append(make_rows(categories, clues, answers, season_name, game_name, values), ignore_index=True)
     
     if debug:
         print(f'Finished acquiring Season: {season_name}')
-    return df
+    
+    df.to_csv(f'data/{season_name}.csv')
+
 
 def all_seasons(seasons, debug, df):
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        executor.map(lambda x: season_data(x, debug, df), seasons)
+        executor.map(lambda x: season_data(x, debug), seasons)
+    
+    for filename in os.listdir('data'):
+        df.append(pd.read_csv(f'data/{filename}'), ignore_index=True)
+
+    return df
+
 
 def wiki_title(answer, debug=True):
     results = wiki.search(answer)
@@ -224,7 +236,7 @@ def clues(debug=False, fresh=False):
 
     seasons = season_urls()
 
-    all_seasons(seasons, debug, jeopardy)
+    jeopardy = all_seasons(seasons, debug, jeopardy)
 
     # for url in seasons:
     #     jeopardy = season_data(url, debug, update, jeopardy)
