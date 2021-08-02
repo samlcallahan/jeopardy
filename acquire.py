@@ -176,55 +176,65 @@ def make_rows(categories, clues, answers, season, episode, values):
                         'answer': answers[i]})
     return rows
 
-def season_data(url, debug):
+def save_df(df):
+    feather.write_feather(df, f'data/{df.name}.feather')
+
+def season_data(url):
     season_name = url.split('=')[1]
     
     df = pd.DataFrame()
 
-    df.name = season_name
-
     episodes = episode_urls(url)
 
     for i, episode in enumerate(episodes):
-        game_name, categories, clues, answers, values = episode_data(episode, debug)
+        game_name, categories, clues, answers, values = episode_data(episode)
 
-        if debug:
-            print(f'Just acquired: Episode {i + 1} out of {len(episodes)} in season {season_name}. {100 * (i+1) / len(episodes):.2f}% complete.')
+        percent_acquired = f'{100 * (i+1) / len(episodes):4.2f}% complete:'
+
+        print(f'{percent_acquired:16} Season {season_name:14} ({i + 1} / {len(episodes)})')
         df = df.append(make_rows(categories, clues, answers, season_name, game_name, values), ignore_index=True)
     
-    if debug:
-        print(f'Finished acquiring Season: {season_name}')
-    
-    df.to_csv(f'data/{season_name}.csv')
+    print(f'Finished acquiring Season: {season_name}')
 
-
-def all_seasons(seasons, debug):
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        executor.map(lambda x: season_data(x, debug), seasons)
-
-def combine_data(df):
-    for filename in os.listdir('data'):
-        df = df.append(pd.read_csv(f'data/{filename}', index_col=0), ignore_index=True)
+    df.name = season_name
+    save_df(df)
 
     return df
 
-def save_df(df):
-    feather.write_feather(df, f'{df.name}.feather')
+def combine_data(dfs):
+    df = pd.DataFrame()
+    for season in dfs:
+        df = df.append(season, ignore_index=True)
+    return df
+
+def all_seasons(seasons):
+
+    season_dfs = []
+    season_futures = []
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        for season_url in seasons:
+            season_futures.append(executor.submit(season_data, season_url))
+    
+    for future in concurrent.futures.as_completed(season_futures):
+        season_dfs.append(future.result())
+
+    return combine_data(season_dfs)
 
 def clues(debug=False, fresh=False):
-    jeopardy = pd.DataFrame()
-    jeopardy.name = 'jeopardy'
     if os.path.exists('jeopardy.feather') and not fresh:
         return pd.read_feather('jeopardy.feather')
 
     seasons = season_urls()
 
-    all_seasons(seasons, debug)
+    all_seasons(seasons)
 
-    jeopardy = combine_data(jeopardy)
+    jeopardy = combine_data()
+    jeopardy.name = 'jeopardy'
 
     save_df(jeopardy)
     return jeopardy
 
 if __name__ == '__main__':
+    time = time()
     clues(debug=('debug' in sys.argv), fresh=('fresh' in sys.argv))
+    print(f'{time() - time} elapsed.')
