@@ -143,7 +143,7 @@ def episode_answers(episode_soup):
         answers.append(answer_soup.find('em').text)
     return answers
 
-def episode_data(episode_url, debug):
+def episode_data(episode_url, debug=True):
     '''
     given an episode's url returns a tuple of lists of the categories, clues, and correct answers in an episode
     '''
@@ -188,6 +188,8 @@ def season_data(url, debug):
         if debug:
             print(f'Just acquired: {game_name}')
         df.append(make_rows(categories, clues, answers, season_name, game_name, values), ignore_index=True)
+        # if debug:
+        #     print(df)
     
     if debug:
         print(f'Finished acquiring Season: {season_name}')
@@ -284,5 +286,5 @@ def wiki_df(debug=False):
     save_df(wiki)
     return wiki
 
-if __name__ == '__main__':
-    clues(debug=('debug' in sys.argv), fresh=('fresh' in sys.argv))
+# if __name__ == '__main__':
+#     clues(debug=('debug' in sys.argv), fresh=('fresh' in sys.argv))
