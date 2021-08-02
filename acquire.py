@@ -20,6 +20,7 @@ def get_session():
     '''
     if the current thread doesn't have a requests Session object, creates one and updates the headers
     '''
+
     if not hasattr(thread_local, "session"):
         thread_local.session = Session()
         thread_local.session.headers.update(HEADERS)
@@ -29,10 +30,12 @@ def season_urls():
     '''
     gets the urls for all seasons of jeopardy from the above website
     '''
+
     url_suffix = "listseasons.php"
 
     # gets html from website index
     response = get(URL + url_suffix, headers=HEADERS)
+
     soup = BeautifulSoup(response.content, 'html.parser')
     
     # picks out all season elements
@@ -48,6 +51,7 @@ def episode_urls(season_url):
     '''
     gets URLs for all episodes in a given season
     '''
+
     session = get_session()
 
     # gets html of season index
@@ -69,6 +73,7 @@ def decode_category(code, categories):
     clue codes are of the format [J/DJ]_[category_number]_[question_number] or FJ
     most episodes have 13 categories (6 jeopardy, 6 double jeopardy, 1 final jeopardy), but some have only 7 (6 double jeopardy, 1 final jeopardy)
     '''
+
     if code[0] == 'J':
         index = int(code[-3]) - 1
         return categories[index]
@@ -89,13 +94,13 @@ def episode_category_list(episode_soup):
     # goes through each td chunk and finds the category name in it. Sometimes it's split into multiple html elements.
     category_list = []
     for i in soups:
-        if i.text is not None:
-            category_list.append(i.text)
+        if i.get_text() is not None:
+            category_list.append(i.get_text())
         else:
             category = ''
             for element in i.contents:
-                if element.text is not None:
-                    category += element.text
+                if element.get_text() is not None:
+                    category += element.get_text()
             category_list.append(category)
 
     return category_list
@@ -104,28 +109,28 @@ def episode_clue_data(episode_soup, category_list, debug):
     '''
     returns a list of all clues and their categories in an episode, given the episode page's soup
     '''
+
     clues = []
     categories = []
     values = []
 
-    for spoonful in episode_soup.find_all(class_='clue'):
-        if spoonful.text == '\n':
+    for spoonful in episode_soup.find_all(class_='clue_text'):
+        if spoonful.get_text() == '\n':
             continue
-        clue_text = spoonful.find(class_='clue_text')
-        clues.append(clue_text.text)
-        # if debug:
-        #     print(clue_text.text)
-        clue_code = clue_text['id'][5:]
+        clues.append(spoonful.get_text())
+
+        clue_code = spoonful['id'][5:]
 
         category = decode_category(clue_code, category_list)
         categories.append(category)
 
+    for spoonful in episode_soup.find_all(class_='clue'):
         if spoonful.find(class_='clue_value'):
-            values.append(spoonful.find(class_='clue_value').text)
+            values.append(spoonful.find(class_='clue_value').get_text())
         elif spoonful.find(class_='clue_value_daily_double'):
-            values.append(spoonful.find(class_='clue_value_daily_double').text)
-        else:
-            values.append(None)
+            values.append(spoonful.find(class_='clue_value_daily_double').get_text())
+
+    values.append(None)
     return clues, categories, values
     
 def episode_answers(episode_soup):
@@ -140,7 +145,7 @@ def episode_answers(episode_soup):
 
     for soup_string in spoonfuls:
         answer_soup = BeautifulSoup(soup_string, 'html.parser')
-        answers.append(answer_soup.find('em').text)
+        answers.append(answer_soup.find('em').get_text())
     return answers
 
 def episode_data(episode_url, debug=True):
@@ -156,10 +161,11 @@ def episode_data(episode_url, debug=True):
     clues, categories, values = episode_clue_data(soup, category_list, debug)
     correct_responses = episode_answers(soup)
     
-    game = soup.find(id='game_title').text
+    game = soup.find(id='game_title').get_text()
     return game, categories, clues, correct_responses, values
 
 def make_rows(categories, clues, answers, season, episode, values):
+
     rows = []
     for i in range(len(clues)):
         rows.append({   'season': season,
@@ -172,8 +178,6 @@ def make_rows(categories, clues, answers, season, episode, values):
 
 def season_data(url, debug):
     season_name = url.split('=')[1]
-    # if update:
-    #     acquired_games = set(df[df.season == season_name]['episode'])
     
     df = pd.DataFrame()
 
@@ -181,15 +185,12 @@ def season_data(url, debug):
 
     episodes = episode_urls(url)
 
-    for episode in episodes:
+    for i, episode in enumerate(episodes):
         game_name, categories, clues, answers, values = episode_data(episode, debug)
-        # if update and game_name in acquired_games:
-        #     break
+
         if debug:
-            print(f'Just acquired: {game_name}')
-        df.append(make_rows(categories, clues, answers, season_name, game_name, values), ignore_index=True)
-        # if debug:
-        #     print(df)
+            print(f'Just acquired: Episode {i + 1} out of {len(episodes)} in season {season_name}. {100 * (i+1) / len(episodes):.2f}% complete.')
+        df = df.append(make_rows(categories, clues, answers, season_name, game_name, values), ignore_index=True)
     
     if debug:
         print(f'Finished acquiring Season: {season_name}')
@@ -197,32 +198,15 @@ def season_data(url, debug):
     df.to_csv(f'data/{season_name}.csv')
 
 
-def all_seasons(seasons, debug, df):
+def all_seasons(seasons, debug):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         executor.map(lambda x: season_data(x, debug), seasons)
-    
+
+def combine_data(df):
     for filename in os.listdir('data'):
-        df.append(pd.read_csv(f'data/{filename}'), ignore_index=True)
+        df = df.append(pd.read_csv(f'data/{filename}', index_col=0), ignore_index=True)
 
     return df
-
-
-def wiki_title(answer, debug=True):
-    results = wiki.search(answer)
-    if results == []:
-        print(f'{answer} not found.')
-        return None
-    title = results[0]
-    print(f'{answer} matched {title}')
-    return title
-
-def wiki_data(wiki_title, full_content = False):
-    if wiki_title is None:
-        return None
-    if full_content:
-        return wiki.page(wiki_title).content
-    wiki_info = wiki.summary(wiki_title)
-    return wiki_info
 
 def save_df(df):
     feather.write_feather(df, f'{df.name}.feather')
@@ -232,59 +216,15 @@ def clues(debug=False, fresh=False):
     jeopardy.name = 'jeopardy'
     if os.path.exists('jeopardy.feather') and not fresh:
         return pd.read_feather('jeopardy.feather')
-    
-    # s = Session()
-    # s.headers.update(HEADERS)
 
     seasons = season_urls()
 
-    jeopardy = all_seasons(seasons, debug, jeopardy)
+    all_seasons(seasons, debug)
 
-    # for url in seasons:
-    #     jeopardy = season_data(url, debug, update, jeopardy)
-    
-    # jeopardy.name = 'jeopardy'
+    jeopardy = combine_data(jeopardy)
 
-    # seasons['names'] = seasons['urls'].str.split('=').apply(lambda x: x[1])
-    
-    # for url in seasons:
-    #     jeopardy = season_data(url, debug, update, jeopardy)
-        # season = seasons[seasons['urls'] == url].loc[0, 'names']
-
-        # if update:
-        #     acquired_games = set(jeopardy[jeopardy.season == season]['episode'])
-
-        # if debug:
-        #     print(f'Acquiring Season: {season}')
-
-        # episodes = episode_urls(url)
-
-        # for episode in episodes:
-        #     game_name, categories, clues, answers, values = episode_data(episode)
-        #     if update and game_name in acquired_games:
-        #         break
-        #     if debug:
-        #         print(f'Just acquired: {game_name}')
-        #     jeopardy.append(make_rows(categories, clues, answers, season, game_name, values), ignore_index=True)
     save_df(jeopardy)
     return jeopardy
 
-def wiki_df(debug=False):
-    if os.path.exists('wiki.feather'):
-        wiki = feather.read_feather('wiki.feather')
-        return wiki
-
-    wiki = clues()
-    wiki.name = 'wiki'
-    
-    if debug:
-        wiki['title'] = wiki['answer'].apply(lambda x: wiki_title(x, True))
-    else:
-        wiki['title'] = wiki['answer'].apply(wiki_title)
-    wiki['summary'] = wiki['title'].apply(wiki_data)
-
-    save_df(wiki)
-    return wiki
-
-# if __name__ == '__main__':
-#     clues(debug=('debug' in sys.argv), fresh=('fresh' in sys.argv))
+if __name__ == '__main__':
+    clues(debug=('debug' in sys.argv), fresh=('fresh' in sys.argv))
